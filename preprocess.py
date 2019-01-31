@@ -51,32 +51,37 @@ def build_save_dataset(corpus_type, fields, opt):
     if corpus_type == 'train':
         src = opt.train_src
         tgt = opt.train_tgt
+        ans = opt.train_ans
     else:
         src = opt.valid_src
         tgt = opt.valid_tgt
+        ans = opt.valid_ans
 
-    logger.info("Reading source and target files: %s %s." % (src, tgt))
+    logger.info("Reading source answer and target files: %s %s %s." % (src, ans, tgt))
 
     src_shards = split_corpus(src, opt.shard_size)
     tgt_shards = split_corpus(tgt, opt.shard_size)
-    shard_pairs = zip(src_shards, tgt_shards)
+    ans_shards = split_corpus(ans, opt.shard_size)
+
+    shard_pairs = zip(src_shards, tgt_shards, ans_shards)
     dataset_paths = []
 
-    for i, (src_shard, tgt_shard) in enumerate(shard_pairs):
-        assert len(src_shard) == len(tgt_shard)
+    for i, (src_shard, tgt_shard, ans_shard) in enumerate(shard_pairs):
+        assert len(src_shard) == len(tgt_shard) == len(ans_shard)
         logger.info("Building shard %d." % i)
         dataset = inputters.build_dataset(
             fields, opt.data_type,
             src=src_shard,
             tgt=tgt_shard,
+            ans=ans_shard,
             src_dir=opt.src_dir,
             src_seq_len=opt.src_seq_length,
             tgt_seq_len=opt.tgt_seq_length,
+            ans_seq_len=opt.ans_seq_length,
             sample_rate=opt.sample_rate,
             window_size=opt.window_size,
             window_stride=opt.window_stride,
             window=opt.window,
-            image_channel_size=opt.image_channel_size,
             use_filter_pred=corpus_type == 'train' or opt.filter_valid
         )
 
@@ -100,7 +105,8 @@ def build_save_vocab(train_dataset, fields, opt):
     fields = inputters.build_vocab(
         train_dataset, fields, opt.data_type, opt.share_vocab,
         opt.src_vocab, opt.src_vocab_size, opt.src_words_min_frequency,
-        opt.tgt_vocab, opt.tgt_vocab_size, opt.tgt_words_min_frequency
+        opt.tgt_vocab, opt.tgt_vocab_size, opt.tgt_words_min_frequency,
+        opt.ans_vocab, opt.ans_vocab_size, opt.ans_words_min_frequency
     )
 
     vocab_path = opt.save_data + '.vocab.pt'
@@ -140,17 +146,21 @@ def main():
     src_nfeats = count_features(opt.train_src) if opt.data_type == 'text' \
         else 0
     tgt_nfeats = count_features(opt.train_tgt)  # tgt always text so far
+    ans_nfeats = count_features(opt.train_ans)
     logger.info(" * number of source features: %d." % src_nfeats)
     logger.info(" * number of target features: %d." % tgt_nfeats)
+    logger.info(" * number of answer features: %d." % ans_nfeats)
 
     logger.info("Building `Fields` object...")
     fields = inputters.get_fields(
         opt.data_type,
         src_nfeats,
         tgt_nfeats,
+        ans_nfeats,
         dynamic_dict=opt.dynamic_dict,
         src_truncate=opt.src_seq_length_trunc,
-        tgt_truncate=opt.tgt_seq_length_trunc)
+        tgt_truncate=opt.tgt_seq_length_trunc,
+        ans_truncate=opt.ans_seq_length_trunc)
 
     logger.info("Building & saving training data...")
     train_dataset_files = build_save_dataset('train', fields, opt)

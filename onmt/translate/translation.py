@@ -29,7 +29,7 @@ class TranslationBuilder(object):
         self.replace_unk = replace_unk
         self.has_tgt = has_tgt
 
-    def _build_target_tokens(self, src, src_vocab, src_raw, pred, attn):
+    def _build_target_tokens(self, src, src_vocab, src_raw, ans_raw, pred, attn):
         tgt_field = self.fields["tgt"][0][1].base_field
         vocab = tgt_field.vocab
         tokens = []
@@ -37,6 +37,7 @@ class TranslationBuilder(object):
             if tok < len(vocab):
                 tokens.append(vocab.itos[tok])
             else:
+                #assert src_vocab.itos[tok - len(vocab)] == ans_vocab.itos[tok - len(vocab)]
                 tokens.append(src_vocab.itos[tok - len(vocab)])
             if tokens[-1] == tgt_field.eos_token:
                 tokens = tokens[:-1]
@@ -45,7 +46,8 @@ class TranslationBuilder(object):
             for i in range(len(tokens)):
                 if tokens[i] == tgt_field.unk_token:
                     _, max_index = attn[i].max(0)
-                    tokens[i] = src_raw[max_index.item()]
+                    raw = src_raw + ans_raw # append raw words as attention = [source attention; ans attention]
+                    tokens[i] = raw[max_index.item()]
         return tokens
 
     def from_batch(self, translation_batch):
@@ -66,8 +68,13 @@ class TranslationBuilder(object):
         inds, perm = torch.sort(batch.indices)
         if isinstance(self.data, TextDataset):
             src = batch.src[0][:, :, 0].index_select(1, perm)
+            ################# Modified ########################
+            ans = batch.ans[0][:, :, 0].index_select(1, perm)
+            ####################################################
         else:
             src = None
+            ans = None
+       
         tgt = batch.tgt[:, :, 0].index_select(1, perm) \
             if self.has_tgt else None
 
@@ -77,12 +84,19 @@ class TranslationBuilder(object):
                 src_vocab = self.data.src_vocabs[inds[b]] \
                     if self.data.src_vocabs else None
                 src_raw = self.data.examples[inds[b]].src[0]
+                ##############33 Modified ##################
+                #ans_vocab = self.data.ans_vocabs[inds[b]] \
+                #    if self.data.ans_vocabs else None
+                ans_raw = self.data.examples[inds[b]].ans[0]
             else:
                 src_vocab = None
                 src_raw = None
+                #ans_vocab = None
+                ans_raw = None
             pred_sents = [self._build_target_tokens(
                 src[:, b] if src is not None else None,
                 src_vocab, src_raw,
+                ans_raw,
                 preds[b][n], attn[b][n])
                 for n in range(self.n_best)]
             gold_sent = None
@@ -90,11 +104,13 @@ class TranslationBuilder(object):
                 gold_sent = self._build_target_tokens(
                     src[:, b] if src is not None else None,
                     src_vocab, src_raw,
+                    ans_raw,
                     tgt[1:, b] if tgt is not None else None, None)
 
             translation = Translation(
                 src[:, b] if src is not None else None,
-                src_raw, pred_sents, attn[b], pred_score[b],
+                ans[:, b] if ans is not None else None,
+                src_raw, ans_raw, pred_sents, attn[b], pred_score[b],
                 gold_sent, gold_score[b]
             )
             translations.append(translation)
@@ -118,10 +134,14 @@ class Translation(object):
 
     """
 
-    def __init__(self, src, src_raw, pred_sents,
+    def __init__(self, src, ans, src_raw, ans_raw, pred_sents,
                  attn, pred_scores, tgt_sent, gold_score):
         self.src = src
         self.src_raw = src_raw
+        ########### Modified #################
+        self.ans = ans
+        self.ans_raw = ans_raw
+        #################################
         self.pred_sents = pred_sents
         self.attns = attn
         self.pred_scores = pred_scores
@@ -133,7 +153,7 @@ class Translation(object):
         Log translation.
         """
 
-        output = '\nSENT {}: {}\n'.format(sent_number, self.src_raw)
+        output = '\nQUES {}: {}\n ANS {}: {}\n'.format(sent_number, self.src_raw, sent_number, self.ans_raw)
 
         best_pred = self.pred_sents[0]
         best_score = self.pred_scores[0]

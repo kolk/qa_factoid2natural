@@ -19,6 +19,7 @@ import onmt.opts as opts
 import onmt.decoders.ensemble
 from onmt.utils.misc import set_random_seed
 from onmt.modules.copy_generator import collapse_copy_scores
+from onmt.utils.logging import logger
 
 
 def build_translator(opt, report_score=True, logger=None, out_file=None):
@@ -143,6 +144,7 @@ class Translator(object):
     def translate(
         self,
         src,
+        ans,
         tgt=None,
         src_dir=None,
         batch_size=None,
@@ -180,13 +182,13 @@ class Translator(object):
             self.data_type,
             src=src,
             tgt=tgt,
+            ans=ans,
             src_dir=src_dir,
             sample_rate=self.sample_rate,
             window_size=self.window_size,
             window_stride=self.window_stride,
             window=self.window,
             use_filter_pred=self.use_filter_pred,
-            image_channel_size=self.image_channel_size,
         )
 
         cur_device = "cuda" if self.cuda else "cpu"
@@ -357,8 +359,13 @@ class Translator(object):
         end_token = vocab.stoi[tgt_field.eos_token]
 
         # Encoder forward.
-        src, enc_states, memory_bank, src_lengths = self._run_encoder(batch)
-        self.model.decoder.init_state(src, memory_bank, enc_states)
+        ############ Modified ##################################3
+        src, enc_states_ques, memory_bank_ques, ques_lengths, ans, enc_states_ans, memory_bank_ans, ans_lengths  = self._run_encoder(batch)
+        enc_states_final =  tuple(torch.add(enc_q, enc_ans) for enc_q, enc_ans in zip(enc_states_ques, enc_states_ans))
+        memory_bank_final = torch.cat([memory_bank_ques, memory_bank_ans], 0)
+        memory_lengths_final = torch.add(ques_lengths, ans_lengths)
+
+        self.model.decoder.init_state(src, memory_bank_final, enc_states_final)
 
         use_src_map = self.copy_attn
 
@@ -370,22 +377,22 @@ class Translator(object):
         if "tgt" in batch.__dict__:
             results["gold_score"] = self._score_target(
                 batch,
-                memory_bank,
-                src_lengths,
+                memory_bank_final,
+                memory_lengths_final,
                 data,
                 batch.src_map if use_src_map else None
             )
-            self.model.decoder.init_state(src, memory_bank, enc_states)
+            self.model.decoder.init_state(src, memory_bank_final, enc_states_final)
         else:
             results["gold_score"] = [0] * batch_size
 
-        memory_lengths = src_lengths
         src_map = batch.src_map if use_src_map else None
 
-        if isinstance(memory_bank, tuple):
-            mb_device = memory_bank[0].device
+        if isinstance(memory_bank_ques, tuple):
+            mb_device = memory_bank_final[0].device
         else:
-            mb_device = memory_bank.device
+            mb_device = memory_bank_final.device
+
 
         # seq_so_far contains chosen tokens; on each step, dim 1 grows by one.
         seq_so_far = torch.full(
@@ -397,10 +404,10 @@ class Translator(object):
 
             log_probs, attn = self._decode_and_generate(
                 decoder_input,
-                memory_bank,
+                memory_bank_final,
                 batch,
                 data,
-                memory_lengths=memory_lengths,
+                memory_lengths=memory_lengths_final,
                 src_map=src_map,
                 step=step,
                 batch_offset=torch.arange(batch_size, dtype=torch.long)
@@ -433,7 +440,7 @@ class Translator(object):
             # there will only ever be 1 hypothesis per example.
             score = topk_scores[i, 0]
             pred = predictions[i, 0, 1:]  # Ignore start_token.
-            m_len = memory_lengths[i]
+            m_len = memory_lengths_final[i]
             attn = attention[:, i, 0, :m_len] if attention is not None else []
 
             results["scores"][i].append(score)
@@ -478,19 +485,32 @@ class Translator(object):
                 return self._translate_batch(batch, data)
 
     def _run_encoder(self, batch):
-        src, src_lengths = batch.src if isinstance(batch.src, tuple) \
+        src, ques_lengths = batch.src if isinstance(batch.src, tuple) \
                            else (batch.src, None)
+        ################ Modified ########################
+        ans, ans_lengths = batch.ans if isinstance(batch.ans, tuple) \
+                else (batch.ans, None)
 
-        enc_states, memory_bank, src_lengths = self.model.encoder(
-            src, src_lengths)
-        if src_lengths is None:
-            assert not isinstance(memory_bank, tuple), \
+        enc_states_ques, memory_bank_ques, ques_lengths = self.model.encoder(
+            src, ques_lengths)
+        enc_states_ans, memory_bank_ans, ans_lengths = self.model.encoder(
+                ans, ans_lengths)
+
+        if ques_lengths is None:
+            assert not isinstance(memory_bank_ques, tuple), \
                 'Ensemble decoding only supported for text data'
-            src_lengths = torch.Tensor(batch.batch_size) \
-                               .type_as(memory_bank) \
+            ques_lengths = torch.Tensor(batch.batch_size) \
+                               .type_as(memory_bank_ques) \
                                .long() \
-                               .fill_(memory_bank.size(0))
-        return src, enc_states, memory_bank, src_lengths
+                               .fill_(memory_bank_ques.size(0))
+        if ans_lengths is None:
+            assert not isinstance(memory_bank_ans, tuple), \
+                    'Ensemble decoding only supported for text data'
+            ans_lengths = torch.Tensor(batch.batch_size) \
+                    .type_as(memory_bank_ans) \
+                    .long() \
+                    .fill_(memory_bank_ans.size(0))
+        return src, enc_states_ques, memory_bank_ques, ques_lengths, ans, enc_states_ans, memory_bank_ans, ans_lengths
 
     def _decode_and_generate(
         self,
@@ -517,8 +537,7 @@ class Translator(object):
         # in case of inference tgt_len = 1, batch = beam times batch_size
         # in case of Gold Scoring tgt_len = actual length, batch = 1 batch
         dec_out, dec_attn = self.model.decoder(
-            decoder_in, memory_bank, memory_lengths=memory_lengths, step=step
-        )
+            decoder_in, memory_bank, memory_lengths=memory_lengths, step=step)
 
         # Generator forward.
         if not self.copy_attn:
@@ -573,8 +592,13 @@ class Translator(object):
         end_token = vocab.stoi[tgt_field.eos_token]
 
         # Encoder forward.
-        src, enc_states, memory_bank, src_lengths = self._run_encoder(batch)
-        self.model.decoder.init_state(src, memory_bank, enc_states)
+        ###################3 Modified ################################3
+        src, enc_states_ques, memory_bank_ques, src_lengths, ans, enc_states_ans, memory_bank_ans, ans_lengths = self._run_encoder(batch)
+        enc_states_final =  tuple(torch.add(enc_q, enc_ans) for enc_q, enc_ans in zip(enc_states_ques, enc_states_ans))
+        memory_bank_final = torch.cat([memory_bank_ques, memory_bank_ans], 0)
+        memory_lengths_final = torch.add(ques_lengths, ans_lengths)
+
+        self.model.decoder.init_state(src, memory_bank_final, enc_states_final)
 
         use_src_map = self.copy_attn
 
@@ -586,26 +610,26 @@ class Translator(object):
         if "tgt" in batch.__dict__:
             results["gold_score"] = self._score_target(
                 batch,
-                memory_bank,
-                src_lengths,
+                memory_bank_final,
+                memory_lengths_final,
                 data,
                 batch.src_map if use_src_map else None
             )
-            self.model.decoder.init_state(src, memory_bank, enc_states)
+            self.model.decoder.init_state(src, memory_bank_final, enc_states_final)
         else:
             results["gold_score"] = [0] * batch_size
 
         # Tile states and memory beam_size times.
         self.model.decoder.map_state(
             lambda state, dim: tile(state, beam_size, dim=dim))
-        if isinstance(memory_bank, tuple):
-            memory_bank = tuple(tile(x, beam_size, dim=1) for x in memory_bank)
-            mb_device = memory_bank[0].device
+        if isinstance(memory_bank_final, tuple):
+            memory_bank = tuple(tile(x, beam_size, dim=1) for x in memory_bank_final)
+            mb_device = memory_bank_final[0].device
         else:
-            memory_bank = tile(memory_bank, beam_size, dim=1)
-            mb_device = memory_bank.device
+            memory_bank_final = tile(memory_bank_final, beam_size, dim=1)
+            mb_device = memory_bank_final.device
 
-        memory_lengths = tile(src_lengths, beam_size)
+        memory_lengths_final = tile(memory_lengths_final, beam_size)
         src_map = (tile(batch.src_map, beam_size, dim=1)
                    if use_src_map else None)
 
@@ -632,10 +656,10 @@ class Translator(object):
 
             log_probs, attn = self._decode_and_generate(
                 decoder_input,
-                memory_bank,
+                memory_bank_final,
                 batch,
                 data,
-                memory_lengths=memory_lengths,
+                memory_lengths=memory_lengths_final,
                 src_map=src_map,
                 step=step,
                 batch_offset=batch_offset
@@ -742,13 +766,13 @@ class Translator(object):
                               -1, alive_attn.size(-1))
 
             # Reorder states.
-            if isinstance(memory_bank, tuple):
-                memory_bank = tuple(x.index_select(1, select_indices)
-                                    for x in memory_bank)
+            if isinstance(memory_bank_final, tuple):
+                memory_bank_final = tuple(x.index_select(1, select_indices)
+                                    for x in memory_bank_final)
             else:
-                memory_bank = memory_bank.index_select(1, select_indices)
+                memory_bank_final = memory_bank_final.index_select(1, select_indices)
 
-            memory_lengths = memory_lengths.index_select(0, select_indices)
+            memory_lengths_final = memory_lengths_final.index_select(0, select_indices)
             self.model.decoder.map_state(
                 lambda state, dim: state.index_select(dim, select_indices))
             if src_map is not None:
@@ -781,8 +805,12 @@ class Translator(object):
                 for __ in range(batch_size)]
 
         # (1) Run the encoder on the src.
-        src, enc_states, memory_bank, src_lengths = self._run_encoder(batch)
-        self.model.decoder.init_state(src, memory_bank, enc_states)
+        src, enc_states_ques, memory_bank_ques, ques_lengths, ans, enc_states_ans, memory_bank_ans, ans_lengths = self._run_encoder(batch)
+        #################33 Modified #######################
+        enc_states_final =  tuple(torch.add(enc_q, enc_ans) for enc_q, enc_ans in zip(enc_states_ques, enc_states_ans))
+        memory_bank_final = torch.cat([memory_bank_ques, memory_bank_ans], 0)
+        memory_lengths_final = torch.add(ques_lengths, ans_lengths)
+        self.model.decoder.init_state(src, memory_bank_final, enc_states_final)
 
         results = {}
         results["predictions"] = []
@@ -791,9 +819,9 @@ class Translator(object):
         results["batch"] = batch
         if "tgt" in batch.__dict__:
             results["gold_score"] = self._score_target(
-                batch, memory_bank, src_lengths, data, batch.src_map
+                batch, memory_bank_final, memory_lengths_final, data, batch.src_map
                 if self.copy_attn else None)
-            self.model.decoder.init_state(src, memory_bank, enc_states)
+            self.model.decoder.init_state(src, memory_bank_final, enc_states_final)
         else:
             results["gold_score"] = [0] * batch_size
 
@@ -804,11 +832,11 @@ class Translator(object):
         self.model.decoder.map_state(
             lambda state, dim: tile(state, beam_size, dim=dim))
 
-        if isinstance(memory_bank, tuple):
-            memory_bank = tuple(tile(x, beam_size, dim=1) for x in memory_bank)
+        if isinstance(memory_bank_final, tuple):
+            memory_bank_final = tuple(tile(x, beam_size, dim=1) for x in memory_bank_final)
         else:
-            memory_bank = tile(memory_bank, beam_size, dim=1)
-        memory_lengths = tile(src_lengths, beam_size)
+            memory_bank_final = tile(memory_bank_final, beam_size, dim=1)
+        memory_lengths_final = tile(memory_lengths_final, beam_size)
 
         # (3) run the decoder to generate sentences, using beam search.
         for i in range(self.max_length):
@@ -823,9 +851,7 @@ class Translator(object):
 
             # (b) Decode and forward
             out, beam_attn = self._decode_and_generate(
-                inp, memory_bank, batch, data, memory_lengths=memory_lengths,
-                src_map=src_map, step=i
-            )
+                inp, memory_bank_final, batch, data, memory_lengths=memory_lengths_final, src_map=src_map, step=i)
             out = out.view(batch_size, beam_size, -1)
             beam_attn = beam_attn.view(batch_size, beam_size, -1)
 
@@ -834,7 +860,7 @@ class Translator(object):
             # Loop over the batch_size number of beam
             for j, b in enumerate(beam):
                 b.advance(out[j, :],
-                          beam_attn.data[j, :, :memory_lengths[j]])
+                          beam_attn.data[j, :, :memory_lengths_final[j]])
                 select_indices_array.append(
                     b.get_current_origin() + j * beam_size)
             select_indices = torch.cat(select_indices_array)

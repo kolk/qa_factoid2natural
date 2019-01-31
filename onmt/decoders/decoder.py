@@ -6,7 +6,7 @@ import torch.nn as nn
 import onmt.models.stacked_rnn
 from onmt.utils.misc import aeq
 from onmt.utils.rnn_factory import rnn_factory
-
+from onmt.utils.logging import logger
 
 class RNNDecoderBase(nn.Module):
     """
@@ -115,11 +115,16 @@ class RNNDecoderBase(nn.Module):
                                     hidden[1:hidden.size(0):2]], 2)
             return hidden
 
+        ################# Modified ##############################
+        #l_final = [_fix_enc_hidden(torch.add(enc_q, enc_ans)) for enc_q, enc_ans in zip(encoder_final, encoder_ans_final)]
+
         if isinstance(encoder_final, tuple):  # LSTM
-            self.state["hidden"] = tuple([_fix_enc_hidden(enc_hid)
-                                          for enc_hid in encoder_final])
+            #l_final = [_fix_enc_hidden(torch.add(enc_q, enc_ans)) for enc_q, enc_ans in zip(encoder_final, encoder_ans_final)]
+            self.state["hidden"] = tuple(_fix_enc_hidden(enc_hid)
+                                         for enc_hid in encoder_final)
         else:  # GRU
             self.state["hidden"] = (_fix_enc_hidden(encoder_final), )
+        ###########################################################
 
         # Init the input feed.
         batch_size = self.state["hidden"][0].size(1)
@@ -139,8 +144,7 @@ class RNNDecoderBase(nn.Module):
                                      for _ in self.state["hidden"]])
         self.state["input_feed"] = self.state["input_feed"].detach()
 
-    def forward(self, tgt, memory_bank, memory_lengths=None,
-                step=None):
+    def forward(self, tgt, memory_bank, memory_lengths=None, step=None):
         """
         Args:
             tgt (`LongTensor`): sequences of padded tokens
@@ -199,7 +203,6 @@ class StdRNNDecoder(RNNDecoderBase):
     Implemented without input_feeding and currently with no `coverage_attn`
     or `copy_attn` support.
     """
-
     def _run_forward_pass(self, tgt, memory_bank, memory_lengths=None):
         """
         Private helper for running the specific RNN forward pass.
@@ -299,7 +302,6 @@ class InputFeedRNNDecoder(RNNDecoderBase):
           E --> H
           G --> H
     """
-
     def _run_forward_pass(self, tgt, memory_bank, memory_lengths=None):
         """
         See StdRNNDecoder._run_forward_pass() for description
@@ -333,10 +335,14 @@ class InputFeedRNNDecoder(RNNDecoderBase):
             emb_t = emb_t.squeeze(0)
             decoder_input = torch.cat([emb_t, input_feed], 1)
             rnn_output, dec_state = self.rnn(decoder_input, dec_state)
+            ############## Modified ##########################
+            #memory_bank_final = torch.cat([memory_bank_ques, memory_bank_ans], 0)
+            #memory_lengths_final = torch.add(memory_lengths_ques, memory_lengths_ans)
             decoder_output, p_attn = self.attn(
                 rnn_output,
                 memory_bank.transpose(0, 1),
                 memory_lengths=memory_lengths)
+            ################################################
             if self.context_gate is not None:
                 # TODO: context gate should be employed
                 # instead of second RNN transform.
@@ -356,9 +362,11 @@ class InputFeedRNNDecoder(RNNDecoderBase):
                 attns["coverage"] += [coverage]
 
             # Run the forward pass of the copy attention layer.
+            ############# Modified ###################
             if self._copy and not self._reuse_copy_attn:
                 _, copy_attn = self.copy_attn(decoder_output,
                                               memory_bank.transpose(0, 1))
+                ##############################################
                 attns["copy"] += [copy_attn]
             elif self._copy:
                 attns["copy"] = attns["std"]

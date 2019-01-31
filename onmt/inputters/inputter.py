@@ -14,13 +14,9 @@ from torchtext.vocab import Vocab
 
 from onmt.inputters.text_dataset import TextDataset, text_fields,\
     TextMultiField
-from onmt.inputters.image_dataset import ImageDataset, image_fields
-from onmt.inputters.audio_dataset import AudioDataset, audio_fields
 from onmt.utils.logging import logger
 # backwards compatibility
 from onmt.inputters.text_dataset import _feature_tokenize  # noqa: F401
-from onmt.inputters.image_dataset import (  # noqa: F401
-    batch_img as make_img)
 
 import gc
 
@@ -60,12 +56,14 @@ def get_fields(
     src_data_type,
     n_src_feats,
     n_tgt_feats,
+    n_ans_feats,
     pad='<blank>',
     bos='<s>',
     eos='</s>',
     dynamic_dict=False,
     src_truncate=None,
-    tgt_truncate=None
+    tgt_truncate=None,
+    ans_truncate=None
 ):
     """
     src_data_type: type of the source input. Options are [text|img|audio].
@@ -84,9 +82,7 @@ def get_fields(
         'it is not possible to use dynamic_dict with non-text input'
     fields = {'src': [], 'tgt': []}
 
-    fields_getters = {"text": text_fields,
-                      "img": image_fields,
-                      "audio": audio_fields}
+    fields_getters = {"text": text_fields}
 
     src_field_kwargs = {"n_feats": n_src_feats,
                         "include_lengths": True,
@@ -94,6 +90,14 @@ def get_fields(
                         "truncate": src_truncate}
     fields["src"] = fields_getters[src_data_type](
         'src', **src_field_kwargs)
+    ############# Modified ######################
+    ans_field_kwargs = {"n_feats": n_ans_feats,
+                        "include_lengths": True,
+                        "pad": pad, "bos": None, "eos": None,
+                        "truncate": ans_truncate}
+    fields["ans"] = fields_getters[src_data_type](
+            'ans', **ans_field_kwargs)
+    ###############################################
 
     tgt_field_kwargs = {"n_feats": n_tgt_feats,
                         "include_lengths": False,
@@ -129,18 +133,23 @@ def load_old_vocab(vocab, data_type="text", dynamic_dict=False):
     """
     if _old_style_field_list(vocab):  # upgrade to multifield
         fields = vocab
+        #################### Modified ######################
         for base_name, vals in fields.items():
             if ((base_name == 'src' and data_type == 'text') or
-                    base_name == 'tgt'):
+                    base_name == 'tgt' or base_name == 'ans'):
                 assert not isinstance(vals[0][1], TextMultiField)
                 fields[base_name] = [(base_name, TextMultiField(
                     vals[0][0], vals[0][1], vals[1:]))]
+        #################################################
         return fields
     vocab = dict(vocab)
     n_src_features = sum('src_feat_' in k for k in vocab)
     n_tgt_features = sum('tgt_feat_' in k for k in vocab)
+    ######################3 Modified #############################
+    n_ans_features = sum('ans_feat_' in k for k in vocab)
+    ################################################################
     fields = get_fields(
-        data_type, n_src_features, n_tgt_features, dynamic_dict=dynamic_dict
+        data_type, n_src_features, n_tgt_features, n_ans_features, dynamic_dict=dynamic_dict
     )
     for k, vals in fields.items():
         for n, f in vals:
@@ -178,9 +187,10 @@ def old_style_vocab(vocab):
     return _old_style_vocab(vocab) or _old_style_field_list(vocab)
 
 
-def filter_example(ex, use_src_len=True, use_tgt_len=True,
+def filter_example(ex, use_src_len=True, use_tgt_len=True, use_ans_len=True,
                    min_src_len=1, max_src_len=float('inf'),
-                   min_tgt_len=1, max_tgt_len=float('inf')):
+                   min_tgt_len=1, max_tgt_len=float('inf'),
+                   min_ans_len=1, max_ans_len=float('inf')):
     """
     A generalized function for filtering examples based on the length of their
     src or tgt values. Rather than being used by itself as the filter_pred
@@ -188,38 +198,28 @@ def filter_example(ex, use_src_len=True, use_tgt_len=True,
     specified except the value of the example.
     """
     return (not use_src_len or min_src_len <= len(ex.src) <= max_src_len) and \
-        (not use_tgt_len or min_tgt_len <= len(ex.tgt) <= max_tgt_len)
+        (not use_tgt_len or min_tgt_len <= len(ex.tgt) <= max_tgt_len) and \
+        (not use_ans_len or min_ans_len <= len(ex.ans) <= max_ans_len)
 
 
-def build_dataset(fields, data_type, src,
+def build_dataset(fields, data_type, src, ans,
                   src_dir=None, tgt=None,
-                  src_seq_len=50, tgt_seq_len=50,
+                  src_seq_len=50, tgt_seq_len=50, ans_seq_len=50, 
                   sample_rate=0, window_size=0, window_stride=0, window=None,
-                  normalize_audio=True, use_filter_pred=True,
-                  image_channel_size=3):
+                  use_filter_pred=True):
     """
     src: path to corpus file or iterator over source data
     tgt: path to corpus file, iterator over target data, or None
     """
     dataset_classes = {
-        'text': TextDataset, 'img': ImageDataset, 'audio': AudioDataset
+        'text': TextDataset
     }
     assert data_type in dataset_classes
     assert src is not None
+    ############ MOdified ##########################
     if data_type == 'text':
         src_examples_iter = TextDataset.make_examples(src, "src")
-    elif data_type == 'img':
-        # there is a truncate argument as well, but it was never set to
-        # anything besides None before
-        src_examples_iter = ImageDataset.make_examples(
-            src, src_dir, 'src', channel_size=image_channel_size
-        )
-    else:
-        src_examples_iter = AudioDataset.make_examples(
-            src, src_dir, "src", sample_rate,
-            window_size, window_stride, window,
-            normalize_audio, None)
-
+        ans_examples_iter = TextDataset.make_examples(ans, "ans")
     if tgt is None:
         tgt_examples_iter = None
     else:
@@ -230,14 +230,16 @@ def build_dataset(fields, data_type, src,
     if use_filter_pred and tgt_examples_iter is not None:
         filter_pred = partial(
             filter_example, use_src_len=data_type == 'text',
-            max_src_len=src_seq_len, max_tgt_len=tgt_seq_len
+            max_src_len=src_seq_len, max_tgt_len=tgt_seq_len,
+            max_ans_len=ans_seq_len
         )
     else:
         filter_pred = None
 
     dataset_cls = dataset_classes[data_type]
     dataset = dataset_cls(
-        fields, src_examples_iter, tgt_examples_iter, filter_pred=filter_pred)
+        fields, src_examples_iter, tgt_examples_iter, ans_examples_iter, filter_pred=filter_pred)
+    #########################################
     return dataset
 
 
@@ -270,7 +272,8 @@ def _build_fv_from_multifield(multifield, counters, build_fv_args):
 
 def build_vocab(train_dataset_files, fields, data_type, share_vocab,
                 src_vocab_path, src_vocab_size, src_words_min_frequency,
-                tgt_vocab_path, tgt_vocab_size, tgt_words_min_frequency):
+                tgt_vocab_path, tgt_vocab_size, tgt_words_min_frequency,
+                ans_vocab_path, ans_vocab_size, ans_words_min_frequency):
     """
     Args:
         train_dataset_files: a list of train dataset pt file.
@@ -304,6 +307,15 @@ def build_vocab(train_dataset_files, fields, data_type, share_vocab,
     else:
         tgt_vocab = None
 
+    ###################### Modified ############################
+    if ans_vocab_path:
+        ans_vocab, ans_vocab_size = _load_vocab(
+            ans_vocab_path, "ans", counters)
+    else:
+        ans_vocab = None
+    ###########################################################
+
+
     for i, path in enumerate(train_dataset_files):
         dataset = torch.load(path)
         logger.info(" * reloading %s." % path)
@@ -319,7 +331,8 @@ def build_vocab(train_dataset_files, fields, data_type, share_vocab,
                 for (sub_n, sub_f), fd in zip(
                         f_iter, all_data):
                     has_vocab = (sub_n == 'src' and src_vocab) or \
-                                (sub_n == 'tgt' and tgt_vocab)
+                                (sub_n == 'tgt' and tgt_vocab) or \
+                                (sub_n == 'ans' and ans_vocab)
                     if sub_f.sequential and not has_vocab:
                         val = fd
                         counters[sub_n].update(val)
@@ -336,6 +349,10 @@ def build_vocab(train_dataset_files, fields, data_type, share_vocab,
     build_fv_args = defaultdict(dict)
     build_fv_args["src"] = dict(
         max_size=src_vocab_size, min_freq=src_words_min_frequency)
+    ############## Modified #####################
+    build_fv_args["ans"] = dict(
+            max_size=ans_vocab_size, min_freq=ans_words_min_frequency)
+    ###################################
     build_fv_args["tgt"] = dict(
         max_size=tgt_vocab_size, min_freq=tgt_words_min_frequency)
     assert len(fields["tgt"]) == 1
@@ -345,25 +362,35 @@ def build_vocab(train_dataset_files, fields, data_type, share_vocab,
         assert len(fields["src"]) == 1
         src_multifield = fields["src"][0][1]
         _build_fv_from_multifield(src_multifield, counters, build_fv_args)
+
+        ################### Modified ############################
+        assert len(fields['ans']) == 1
+        ans_multifield = fields["ans"][0][1]
+        _build_fv_from_multifield(ans_multifield, counters, build_fv_args)
+        ########################################################
+
         if share_vocab:
             # `tgt_vocab_size` is ignored when sharing vocabularies
             logger.info(" * merging src and tgt vocab...")
             src_field = src_multifield.base_field
             tgt_field = tgt_multifield.base_field
+            ############ Modified ###############################
+            ans_field = ans_multifield.base_field
             _merge_field_vocabs(
-                src_field, tgt_field, vocab_size=src_vocab_size,
+                src_field, ans_field, tgt_field, vocab_size=src_vocab_size,
                 min_freq=src_words_min_frequency)
+            #####################################################
             logger.info(" * merged vocab size: %d." % len(src_field.vocab))
     return fields  # is the return necessary?
 
 
-def _merge_field_vocabs(src_field, tgt_field, vocab_size, min_freq):
+def _merge_field_vocabs(src_field, ans_field, tgt_field, vocab_size, min_freq):
     # in the long run, shouldn't it be possible to do this by calling
     # build_vocab with both the src and tgt data?
     specials = [tgt_field.unk_token, tgt_field.pad_token,
                 tgt_field.init_token, tgt_field.eos_token]
     merged = sum(
-        [src_field.vocab.freqs, tgt_field.vocab.freqs], Counter()
+        [src_field.vocab.freqs, ans_field.vocab.freqs, tgt_field.vocab.freqs], Counter()
     )
     merged_vocab = Vocab(
         merged, specials=specials,
@@ -371,6 +398,7 @@ def _merge_field_vocabs(src_field, tgt_field, vocab_size, min_freq):
     )
     src_field.vocab = merged_vocab
     tgt_field.vocab = merged_vocab
+    ans_field.vocab = merged_vocab
     assert len(src_field.vocab) == len(tgt_field.vocab)
 
 
@@ -433,6 +461,7 @@ class DatasetLazyIter(object):
 
     def __iter__(self):
         paths = cycle(self._paths) if self.is_train else self._paths
+        #logger.info("path")
         for path in paths:
             cur_dataset = torch.load(path)
             logger.info('Loading dataset from %s, number of examples: %d' %
@@ -464,18 +493,21 @@ def max_tok_len(new, count, sofar):
     in a batch <= batch_size
     """
     # Maintains the longest src and tgt length in the current batch
-    global max_src_in_batch, max_tgt_in_batch
+    global max_src_in_batch, maix_tgt_in_batch, max_ans_in_batch
     # Reset current longest length at a new batch (count=1)
     if count == 1:
         max_src_in_batch = 0
         max_tgt_in_batch = 0
+        max_ans_in_batch = 0
     # Src: <bos> w1 ... wN <eos>
     max_src_in_batch = max(max_src_in_batch, len(new.src) + 2)
+    max_ans_in_batch = max(max_ans_in_batch, len(new.ans) + 2)
     # Tgt: w1 ... wN <eos>
     max_tgt_in_batch = max(max_tgt_in_batch, len(new.tgt) + 1)
     src_elements = count * max_src_in_batch
     tgt_elements = count * max_tgt_in_batch
-    return max(src_elements, tgt_elements)
+    ans_elements = count * max_ans_in_batch
+    return max(src_elements, tgt_elements, ans_elements)
 
 
 def build_dataset_iter(corpus_type, fields, opt, is_train=True):

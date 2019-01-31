@@ -140,7 +140,7 @@ def main(opt, device_id):
     # fields to have a different structure
     dataset_fields = dict(chain.from_iterable(fields.values()))
 
-    train_iter = build_dataset_iter("train", dataset_fields, opt)
+    train_iter = build_dataset_iter("train", dataset_fields, opt, is_train=True)
     valid_iter = build_dataset_iter(
         "valid", dataset_fields, opt, is_train=False)
 

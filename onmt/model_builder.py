@@ -13,8 +13,6 @@ from onmt.encoders.rnn_encoder import RNNEncoder
 from onmt.encoders.transformer import TransformerEncoder
 from onmt.encoders.cnn_encoder import CNNEncoder
 from onmt.encoders.mean_encoder import MeanEncoder
-from onmt.encoders.audio_encoder import AudioEncoder
-from onmt.encoders.image_encoder import ImageEncoder
 
 from onmt.decoders.decoder import InputFeedRNNDecoder, StdRNNDecoder
 from onmt.decoders.transformer import TransformerDecoder
@@ -181,7 +179,7 @@ def build_base_model(model_opt, fields, gpu, checkpoint=None):
     Returns:
         the NMTModel.
     """
-    assert model_opt.model_type in ["text", "img", "audio"], \
+    assert model_opt.model_type in ["text"], \
         "Unsupported model type %s" % model_opt.model_type
 
     # for backward compatibility
@@ -196,34 +194,14 @@ def build_base_model(model_opt, fields, gpu, checkpoint=None):
         src_field = src_fields[0]
         src_emb = build_embeddings(model_opt, src_field)
         encoder = build_encoder(model_opt, src_emb)
-    elif model_opt.model_type == "img":
-        # why is build_encoder not used here?
-        # why is the model_opt.__dict__ check necessary?
-        if "image_channel_size" not in model_opt.__dict__:
-            image_channel_size = 3
-        else:
-            image_channel_size = model_opt.image_channel_size
 
-        encoder = ImageEncoder(
-            model_opt.enc_layers,
-            model_opt.brnn,
-            model_opt.enc_rnn_size,
-            model_opt.dropout,
-            image_channel_size
-        )
-    elif model_opt.model_type == "audio":
-        encoder = AudioEncoder(
-            model_opt.rnn_type,
-            model_opt.enc_layers,
-            model_opt.dec_layers,
-            model_opt.brnn,
-            model_opt.enc_rnn_size,
-            model_opt.dec_rnn_size,
-            model_opt.audio_enc_pooling,
-            model_opt.dropout,
-            model_opt.sample_rate,
-            model_opt.window_size
-        )
+        ################# Modified #########################
+        ans_fields = [f for n, f in fields['ans']]
+        assert len(ans_fields) == 1
+        ans_field = ans_fields[0]
+        ans_emb = build_embeddings(model_opt, ans_field)
+        encoder_ans = build_encoder(model_opt, ans_emb)
+        ##################################################
 
     # Build decoder.
     tgt_fields = [f for n, f in fields['tgt']]
@@ -235,10 +213,12 @@ def build_base_model(model_opt, fields, gpu, checkpoint=None):
     # Share the embedding matrix - preprocess with share_vocab required.
     if model_opt.share_embeddings:
         # src/tgt vocab should be the same if `-share_vocab` is specified.
-        assert src_field.base_field.vocab == tgt_field.base_field.vocab, \
+        assert src_field.base_field.vocab == tgt_field.base_field.vocab == ans_field.base_field.vocab, \
             "preprocess with -share_vocab if you use share_embeddings"
 
+        #################### TO-DO ##############################################
         tgt_emb.word_lut.weight = src_emb.word_lut.weight
+        ####################################################
 
     decoder = build_decoder(model_opt, tgt_emb)
 

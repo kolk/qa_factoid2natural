@@ -22,6 +22,9 @@ class Statistics(object):
         self.n_words = n_words
         self.n_correct = n_correct
         self.n_src_words = 0
+        ############# Modified #############
+        self.n_ans_words = 0
+        #################################
         self.start_time = time.time()
 
     @staticmethod
@@ -65,10 +68,10 @@ class Statistics(object):
             if other_rank == our_rank:
                 continue
             for i, stat in enumerate(stats):
-                our_stats[i].update(stat, update_n_src_words=True)
+                our_stats[i].update(stat, update_n_src_words=True, update_n_ans_words=True)
         return our_stats
 
-    def update(self, stat, update_n_src_words=False):
+    def update(self, stat, update_n_src_words=False, update_n_ans_words=False):
         """
         Update statistics by suming values with another `Statistics` object
 
@@ -84,6 +87,10 @@ class Statistics(object):
 
         if update_n_src_words:
             self.n_src_words += stat.n_src_words
+        ################## Modified ####################
+        if update_n_ans_words:
+            self.n_ans_words += stat.n_ans_words
+        ##############################################
 
     def accuracy(self):
         """ compute accuracy """
@@ -112,13 +119,15 @@ class Statistics(object):
         t = self.elapsed_time()
         logger.info(
             ("Step %2d/%5d; acc: %6.2f; ppl: %5.2f; xent: %4.2f; " +
-             "lr: %7.5f; %3.0f/%3.0f tok/s; %6.0f sec")
+             "lr: %7.5f; %3.0f/%3.0f tok/s; %3.0f/%3.0f tok/s  ;%6.0f sec")
             % (step, num_steps,
                self.accuracy(),
                self.ppl(),
                self.xent(),
                learning_rate,
                self.n_src_words / (t + 1e-5),
+               self.n_words / (t + 1e-5),
+               self.n_ans_words / (t + 1e-5),
                self.n_words / (t + 1e-5),
                time.time() - start))
         sys.stdout.flush()

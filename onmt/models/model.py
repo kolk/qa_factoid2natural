@@ -1,6 +1,7 @@
 """ Onmt NMT Model base class definition """
 import torch.nn as nn
-
+import torch
+from onmt.utils.logging import logger
 
 class NMTModel(nn.Module):
     """
@@ -18,7 +19,7 @@ class NMTModel(nn.Module):
         self.encoder = encoder
         self.decoder = decoder
 
-    def forward(self, src, tgt, lengths, bptt=False):
+    def forward(self, src, ans, tgt, lengths, ans_lengths, bptt=False):
         """Forward propagate a `src` and `tgt` pair for training.
         Possible initialized with a beginning decoder state.
 
@@ -43,9 +44,16 @@ class NMTModel(nn.Module):
         """
         tgt = tgt[:-1]  # exclude last target from inputs
 
-        enc_state, memory_bank, lengths = self.encoder(src, lengths)
+        enc_state_ques, memory_bank_ques, ques_lengths = self.encoder(src, lengths)
+        ################ Modified #########################
+        enc_state_ans, memory_bank_ans, ans_lengths = self.encoder(ans, ans_lengths)
+
+        enc_state_final =  tuple(torch.add(enc_q, enc_ans) for enc_q, enc_ans in zip(enc_state_ques, enc_state_ans))
+        memory_bank_final = torch.cat([memory_bank_ques, memory_bank_ans], 0)
+        memory_lengths_final = torch.add(ques_lengths, ans_lengths)
+        
         if bptt is False:
-            self.decoder.init_state(src, memory_bank, enc_state)
-        dec_out, attns = self.decoder(tgt, memory_bank,
-                                      memory_lengths=lengths)
+            self.decoder.init_state(src, memory_bank_final, enc_state_final)
+        dec_out, attns = self.decoder(tgt, memory_bank_final, memory_lengths=memory_lengths_final)
+        ########################################################
         return dec_out, attns

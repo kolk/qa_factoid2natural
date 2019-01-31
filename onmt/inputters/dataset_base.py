@@ -7,6 +7,7 @@ import codecs
 import torch
 from torchtext.data import Example, Dataset
 from torchtext.vocab import Vocab
+from onmt.utils.logging import init_logger, logger
 
 
 # several data readers need optional dependencies. There's no
@@ -56,16 +57,24 @@ class DatasetBase(Dataset):
         the same structure as in the fields argument passed to the constructor.
     """
 
-    def __init__(self, fields, src_examples_iter, tgt_examples_iter,
+    def __init__(self, fields, src_examples_iter, tgt_examples_iter, ans_examples_iter,
                  filter_pred=None):
 
         dynamic_dict = 'src_map' in fields and 'alignment' in fields
 
         if tgt_examples_iter is not None:
-            examples_iter = (self._join_dicts(src, tgt) for src, tgt in
+            if ans_examples_iter is not None:
+                examples_iter = (self._join_dicts(src, tgt, ans) for src, tgt, ans in
+                             zip(src_examples_iter, tgt_examples_iter, ans_examples_iter))
+            else:
+                examples_iter = (self._join_dicts(src, tgt) for src, tgt in
                              zip(src_examples_iter, tgt_examples_iter))
         else:
-            examples_iter = src_examples_iter
+            if ans_examples_iter is not None:
+                examples_iter = (self._join_dicts(src, ans) for src, ans in
+                             zip(src_examples_iter, ans_examples_iter))
+            else:
+                examples_iter = src_examples_iter
 
         # self.src_vocabs is used in collapse_copy_scores and Translator.py
         self.src_vocabs = []
@@ -74,10 +83,13 @@ class DatasetBase(Dataset):
             if dynamic_dict:
                 src_field = fields['src'][0][1]
                 tgt_field = fields['tgt'][0][1]
+                ############ Modified #####################
+                ans_field = fields['ans'][0][1]
                 # this assumes src_field and tgt_field are both text
                 src_vocab, ex_dict = self._dynamic_dict(
-                    ex_dict, src_field.base_field, tgt_field.base_field)
+                    ex_dict, src_field.base_field, ans_field.base_field, tgt_field.base_field)
                 self.src_vocabs.append(src_vocab)
+                ##############################################
             ex_fields = {k: v for k, v in fields.items() if k in ex_dict}
             ex = Example.fromdict(ex_dict, ex_fields)
             examples.append(ex)
@@ -118,15 +130,20 @@ class DatasetBase(Dataset):
         """
         return dict(chain(*[d.items() for d in args]))
 
-    def _dynamic_dict(self, example, src_field, tgt_field):
+    def _dynamic_dict(self, example, src_field, ans_field, tgt_field):
         src = src_field.tokenize(example["src"])
+        ans = ans_field.tokenize(example["ans"])
         # make a small vocab containing just the tokens in the source sequence
         unk = src_field.unk_token
         pad = src_field.pad_token
-        src_vocab = Vocab(Counter(src), specials=[unk, pad])
+        ################# Modified #########################
+        assert unk == ans_field.unk_token
+        assert pad == ans_field.pad_token
+        src_vocab = Vocab(Counter(src+ans), specials=[unk, pad])
         # Map source tokens to indices in the dynamic dict.
-        src_map = torch.LongTensor([src_vocab.stoi[w] for w in src])
+        src_map = torch.LongTensor([src_vocab.stoi[w] for w in src] + [src_vocab.stoi[w] for w in ans])
         example["src_map"] = src_map
+        ################################################################
 
         if "tgt" in example:
             tgt = tgt_field.tokenize(example["tgt"])

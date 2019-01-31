@@ -176,10 +176,16 @@ def preprocess_opts(parser):
               help="Path to the training source data")
     group.add('--train_tgt', '-train_tgt', required=True,
               help="Path to the training target data")
+    group.add('--train_ans', '-train_ans', required=True,
+              help="Path to the training ans data")
+
     group.add('--valid_src', '-valid_src', required=True,
               help="Path to the validation source data")
     group.add('--valid_tgt', '-valid_tgt', required=True,
               help="Path to the validation target data")
+    group.add('--valid_ans', '-valid_ans', required=True,
+              help="Path to the validation target data")
+
 
     group.add('--src_dir', '-src_dir', default="",
               help="Source directory for image or audio files.")
@@ -208,6 +214,10 @@ def preprocess_opts(parser):
     group.add('--tgt_vocab', '-tgt_vocab', default="",
               help="""Path to an existing target vocabulary. Format:
                        one word per line.""")
+    group.add('--ans_vocab', '-ans_vocab', default="",
+              help="""Path to an existing answer vocabulary. Format:
+                       one word per line.""")
+
     group.add('--features_vocabs_prefix', '-features_vocabs_prefix',
               type=str, default='',
               help="Path prefix to existing features vocabularies")
@@ -215,11 +225,17 @@ def preprocess_opts(parser):
               help="Size of the source vocabulary")
     group.add('--tgt_vocab_size', '-tgt_vocab_size', type=int, default=50000,
               help="Size of the target vocabulary")
+    group.add('--ans_vocab_size', '-ans_vocab_size', type=int, default=50000,
+              help="Size of the answer vocabulary")
+
 
     group.add('--src_words_min_frequency',
               '-src_words_min_frequency', type=int, default=0)
     group.add('--tgt_words_min_frequency',
               '-tgt_words_min_frequency', type=int, default=0)
+    group.add('--ans_words_min_frequency',
+              '-ans_words_min_frequency', type=int, default=0)
+
 
     group.add('--dynamic_dict', '-dynamic_dict', action='store_true',
               help="Create dynamic dictionaries")
@@ -238,6 +254,12 @@ def preprocess_opts(parser):
     group.add('--tgt_seq_length_trunc', '-tgt_seq_length_trunc',
               type=int, default=None,
               help="Truncate target sequence length.")
+    group.add('--ans_seq_length', '-ans_seq_length', type=int, default=50,
+              help="Maximum answer sequence length to keep.")
+    group.add('--ans_seq_length_trunc', '-ans_seq_length_trunc',
+              type=int, default=None,
+              help="Truncate answer sequence length.")
+
     group.add('--lower', '-lower', action='store_true', help='lowercase data')
     group.add('--filter_valid', '-filter_valid', action='store_true',
               help='Filter validation data by src and/or tgt length')
@@ -512,6 +534,9 @@ def translate_opts(parser):
               help='Source directory for image or audio files')
     group.add('--tgt', '-tgt',
                        help='True target sequence (optional)')
+    group.add('--ans', '-ans',
+                       help='Answer sequence sequence')
+
     group.add('--shard_size', '-shard_size', type=int, default=10000,
               help="""Divide src and tgt (if applicable) into
                        smaller multiple src and tgt files, then

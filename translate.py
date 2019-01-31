@@ -13,15 +13,18 @@ import onmt.opts as opts
 def main(opt):
     translator = build_translator(opt, report_score=True)
     src_shards = split_corpus(opt.src, opt.shard_size)
+    ############## Modified ##########################
+    ans_shards = split_corpus(opt.ans, opt.shard_size)
     tgt_shards = split_corpus(opt.tgt, opt.shard_size) \
         if opt.tgt is not None else [None]*opt.shard_size
-    shard_pairs = zip(src_shards, tgt_shards)
+    shard_pairs = zip(src_shards, tgt_shards, ans_shards)
 
-    for i, (src_shard, tgt_shard) in enumerate(shard_pairs):
+    for i, (src_shard, tgt_shard, ans_shard) in enumerate(shard_pairs):
         logger.info("Translating shard %d." % i)
         translator.translate(
             src=src_shard,
             tgt=tgt_shard,
+            ans=ans_shard,
             src_dir=opt.src_dir,
             batch_size=opt.batch_size,
             attn_debug=opt.attn_debug

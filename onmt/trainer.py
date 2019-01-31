@@ -220,10 +220,14 @@ class Trainer(object):
             for batch in valid_iter:
                 src, src_lengths = batch.src if isinstance(batch.src, tuple) \
                                    else (batch.src, None)
+                ############# Modified ##############################
+                ans, ans_lengths = batch.ans if isinstance(batch.ans, tuple) \
+                        else (batch.src, None)
+                ###################################################
                 tgt = batch.tgt
 
                 # F-prop through the model.
-                outputs, attns = self.model(src, tgt, src_lengths)
+                outputs, attns = self.model(src, ans, tgt, src_lengths, ans_lengths)
 
                 # Compute loss.
                 _, batch_stats = self.valid_loss(batch, outputs, attns)
@@ -254,6 +258,12 @@ class Trainer(object):
             if src_lengths is not None:
                 report_stats.n_src_words += src_lengths.sum().item()
 
+            #################33 Modified #############################
+            ans, ans_lengths = batch.ans if isinstance(batch.ans, tuple) \
+                    else (batch.ans, None)
+            if ans_lengths is not None:
+                report_stats.n_ans_words += ans_lengths.sum().item()
+            ###########################################################
             tgt_outer = batch.tgt
 
             bptt = False
@@ -264,7 +274,9 @@ class Trainer(object):
                 # 2. F-prop all but generator.
                 if self.grad_accum_count == 1:
                     self.model.zero_grad()
-                outputs, attns = self.model(src, tgt, src_lengths, bptt=bptt)
+                ################## Modified ###########################
+                outputs, attns = self.model(src, ans, tgt, src_lengths, ans_lengths, bptt=bptt)
+                #####################################
                 bptt = True
 
                 # 3. Compute loss.

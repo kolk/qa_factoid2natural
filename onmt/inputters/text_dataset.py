@@ -25,8 +25,16 @@ class TextDataset(DatasetBase):
     @staticmethod
     def sort_key(ex):
         if hasattr(ex, "tgt"):
-            return len(ex.src[0]), len(ex.tgt[0])
-        return len(ex.src[0])
+            if hasattr(ex, "ans"):
+                return len(ex.src[0]), len(ex.ans[0]), len(ex.tgt[0])
+            else:
+                return len(ex.src[0]), len(ex.tgt[0])
+        else:
+            if hasattr(ex, "ans"):
+                return len(ex.src[0]), len(ex.ans[0])
+            else:
+                return len(ex.src[0])
+
 
     @classmethod
     def make_examples(cls, sequences, side):
@@ -34,7 +42,7 @@ class TextDataset(DatasetBase):
         Args:
             sequences: path to corpus file or iterable
             truncate (int): maximum sequence length (0 for unlimited).
-            side (str): "src" or "tgt".
+            side (str): "src" or "tgt" or "ans". 
 
         Yields:
             dictionaries whose keys are the names of fields and whose
