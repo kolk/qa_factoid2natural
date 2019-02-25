@@ -84,3 +84,51 @@ def set_random_seed(seed, is_cuda):
     if is_cuda and seed > 0:
         # These ensure same initialization in multi gpu mode
         torch.cuda.manual_seed(seed)
+
+
+
+
+def pack_padded_sequence_ans(input, lengths, batch_first=False):
+    r"""Packs a Tensor containing padded sequences of variable length.
+
+    Input can be of size ``T x B x *`` where `T` is the length of the longest sequence
+    (equal to ``lengths[0]``), `B` is the batch size, and `*` is any number of
+    dimensions (including 0). If ``batch_first`` is True ``B x T x *`` inputs are
+    expected.
+
+    The sequences should be sorted by length in a decreasing order, i.e.
+    ``input[:,0]`` should be the longest sequence, and ``input[:,B-1]`` the
+    shortest one.
+
+    Note:
+        This function accepts any input that has at least two dimensions. You
+        can apply it to pack the labels, and use the output of the RNN with
+        them to compute the loss directly. A Tensor can be retrieved from
+        a :class:`PackedSequence` object by accessing its ``.data`` attribute.
+
+    Arguments:
+        input (Tensor): padded batch of variable length sequences.
+        lengths (Tensor): list of sequences lengths of each batch element.
+        batch_first (bool, optional): if ``True``, the input is expected in ``B x T x *``
+            format.
+
+    Returns:
+        a :class:`PackedSequence` object
+    """
+
+    ## sort the answer vector ############
+    sorted_lengths = sorted(lengths, reverse=True)
+    indices = np.argsort(lengths)[::-1]
+
+    if isinstance(sorted_lengths, list):
+        sorted_lengths = torch.LongTensor(sorted_lengths)
+
+    data_, batch_sizes_ = PackPadded.apply(input, sorted_lengths, batch_first)
+    data = data_.clone()
+    batch_sizes = batch_sizes_.clone()
+    for i, index in enumerate(indices):
+        data[index] = data_[i, :]
+        #batch_sizes[index] = batch_sizes_[i]
+
+    return PackedSequence(data, batch_sizes)
+

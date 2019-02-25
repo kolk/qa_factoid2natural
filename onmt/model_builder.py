@@ -10,13 +10,8 @@ from torch.nn.init import xavier_uniform_
 import onmt.inputters as inputters
 import onmt.modules
 from onmt.encoders.rnn_encoder import RNNEncoder
-from onmt.encoders.transformer import TransformerEncoder
-from onmt.encoders.cnn_encoder import CNNEncoder
-from onmt.encoders.mean_encoder import MeanEncoder
 
 from onmt.decoders.decoder import InputFeedRNNDecoder, StdRNNDecoder
-from onmt.decoders.transformer import TransformerDecoder
-from onmt.decoders.cnn_decoder import CNNDecoder
 
 from onmt.modules import Embeddings, CopyGenerator
 from onmt.utils.misc import use_gpu
@@ -65,26 +60,7 @@ def build_encoder(opt, embeddings):
         opt: the option in current environment.
         embeddings (Embeddings): vocab embeddings for this encoder.
     """
-    if opt.encoder_type == "transformer":
-        encoder = TransformerEncoder(
-            opt.enc_layers,
-            opt.enc_rnn_size,
-            opt.heads,
-            opt.transformer_ff,
-            opt.dropout,
-            embeddings
-        )
-    elif opt.encoder_type == "cnn":
-        encoder = CNNEncoder(
-            opt.enc_layers,
-            opt.enc_rnn_size,
-            opt.cnn_kernel_width,
-            opt.dropout,
-            embeddings)
-    elif opt.encoder_type == "mean":
-        encoder = MeanEncoder(opt.enc_layers, embeddings)
-    else:
-        encoder = RNNEncoder(
+    encoder = RNNEncoder(
             opt.rnn_type,
             opt.brnn,
             opt.enc_layers,
@@ -92,7 +68,7 @@ def build_encoder(opt, embeddings):
             opt.dropout,
             embeddings,
             opt.bridge
-        )
+    )
     return encoder
 
 
@@ -103,44 +79,21 @@ def build_decoder(opt, embeddings):
         opt: the option in current environment.
         embeddings (Embeddings): vocab embeddings for this decoder.
     """
-    if opt.decoder_type == "transformer":
-        decoder = TransformerDecoder(
-            opt.dec_layers,
-            opt.dec_rnn_size,
-            opt.heads,
-            opt.transformer_ff,
-            opt.global_attention,
-            opt.copy_attn,
-            opt.self_attn_type,
-            opt.dropout,
-            embeddings
-        )
-    elif opt.decoder_type == "cnn":
-        decoder = CNNDecoder(
-            opt.dec_layers,
-            opt.dec_rnn_size,
-            opt.global_attention,
-            opt.copy_attn,
-            opt.cnn_kernel_width,
-            opt.dropout,
-            embeddings
-        )
-    else:
-        dec_class = InputFeedRNNDecoder if opt.input_feed else StdRNNDecoder
-        decoder = dec_class(
-            opt.rnn_type,
-            opt.brnn,
-            opt.dec_layers,
-            opt.dec_rnn_size,
-            opt.global_attention,
-            opt.global_attention_function,
-            opt.coverage_attn,
-            opt.context_gate,
-            opt.copy_attn,
-            opt.dropout,
-            embeddings,
-            opt.reuse_copy_attn
-        )
+    dec_class = InputFeedRNNDecoder if opt.input_feed else StdRNNDecoder
+    decoder = dec_class(
+        opt.rnn_type,
+        opt.brnn,
+        opt.dec_layers,
+        opt.dec_rnn_size,
+        opt.global_attention,
+        opt.global_attention_function,
+        opt.coverage_attn,
+        opt.context_gate,
+        opt.copy_attn,
+        opt.dropout,
+        embeddings,
+        opt.reuse_copy_attn
+    )
     return decoder
 
 
@@ -196,11 +149,12 @@ def build_base_model(model_opt, fields, gpu, checkpoint=None):
         encoder = build_encoder(model_opt, src_emb)
 
         ################# Modified #########################
-        ans_fields = [f for n, f in fields['ans']]
+        '''ans_fields = [f for n, f in fields['ans']]
         assert len(ans_fields) == 1
         ans_field = ans_fields[0]
         ans_emb = build_embeddings(model_opt, ans_field)
         encoder_ans = build_encoder(model_opt, ans_emb)
+        '''
         ##################################################
 
     # Build decoder.

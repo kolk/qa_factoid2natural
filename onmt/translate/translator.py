@@ -492,9 +492,9 @@ class Translator(object):
                 else (batch.ans, None)
 
         enc_states_ques, memory_bank_ques, ques_lengths = self.model.encoder(
-            src, ques_lengths)
+            src, ques_lengths, "ques")
         enc_states_ans, memory_bank_ans, ans_lengths = self.model.encoder(
-                ans, ans_lengths)
+                ans, ans_lengths, "ans")
 
         if ques_lengths is None:
             assert not isinstance(memory_bank_ques, tuple), \

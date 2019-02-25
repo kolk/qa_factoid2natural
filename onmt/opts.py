@@ -134,14 +134,6 @@ def model_opts(parser):
                        dotprod or general (Luong) or MLP (Bahdanau)""")
     group.add('--global_attention_function', '-global_attention_function',
               type=str, default="softmax", choices=["softmax", "sparsemax"])
-    group.add('--self_attn_type', '-self_attn_type',
-              type=str, default="scaled-dot",
-              help="""Self attention type in Transformer decoder
-                       layer -- currently "scaled-dot" or "average" """)
-    group.add('--heads', '-heads', type=int, default=8,
-              help='Number of heads for transformer self-attention')
-    group.add('--transformer_ff', '-transformer_ff', type=int, default=2048,
-              help='Size of hidden transformer feed-forward')
 
     # Generator and loss options.
     group.add('--copy_attn', '-copy_attn', action="store_true",

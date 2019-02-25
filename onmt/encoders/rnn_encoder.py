@@ -7,7 +7,7 @@ from torch.nn.utils.rnn import pad_packed_sequence as unpack
 
 from onmt.encoders.encoder import EncoderBase
 from onmt.utils.rnn_factory import rnn_factory
-
+from onmt.utils.misc import pack_padded_sequence_ans
 
 class RNNEncoder(EncoderBase):
     """ A generic recurrent neural network encoder.
@@ -48,7 +48,7 @@ class RNNEncoder(EncoderBase):
                                     hidden_size,
                                     num_layers)
 
-    def forward(self, src, lengths=None):
+    def forward(self, src, lengths=None, type="ques"):
         "See :obj:`EncoderBase.forward()`"
         self._check_args(src, lengths)
 
@@ -59,7 +59,10 @@ class RNNEncoder(EncoderBase):
         if lengths is not None and not self.no_pack_padded_seq:
             # Lengths data is wrapped inside a Tensor.
             lengths_list = lengths.view(-1).tolist()
-            packed_emb = pack(emb, lengths_list)
+            if type == "ques":
+                packed_emb = pack(emb, lengths_list)
+            elif type == "ans":
+                packed_emb = pack_padded_sequence_ans(emb, lengths)
 
         memory_bank, encoder_final = self.rnn(packed_emb)
 

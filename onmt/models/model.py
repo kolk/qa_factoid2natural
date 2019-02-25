@@ -44,9 +44,9 @@ class NMTModel(nn.Module):
         """
         tgt = tgt[:-1]  # exclude last target from inputs
 
-        enc_state_ques, memory_bank_ques, ques_lengths = self.encoder(src, lengths)
+        enc_state_ques, memory_bank_ques, ques_lengths = self.encoder(src, lengths, "ques")
         ################ Modified #########################
-        enc_state_ans, memory_bank_ans, ans_lengths = self.encoder(ans, ans_lengths)
+        enc_state_ans, memory_bank_ans, ans_lengths = self.encoder(ans, ans_lengths, "ans")
 
         enc_state_final =  tuple(torch.add(enc_q, enc_ans) for enc_q, enc_ans in zip(enc_state_ques, enc_state_ans))
         memory_bank_final = torch.cat([memory_bank_ques, memory_bank_ans], 0)
